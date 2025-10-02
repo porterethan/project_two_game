@@ -1,0 +1,48 @@
+<html>
+
+<head>
+    <title>Import Map Method</title>
+        <script src="lib/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+    </style>
+
+</head>
+<body>
+        <script>
+
+            //1. create a scene
+            const scene = new THREE.Scene();
+            
+            //2. create a camera
+            const camera = new THREE.PerspectiveCamera(
+                                        75,                                       //field of view in degrees
+                                        window.innerWidth / window.innerHeight,   //aspect ratio
+                                        0.1,                                      //near clipping plane
+                                        1000                                      //far clipping plane
+                                        );
+
+            camera.position.z = 5
+            //camera.position.set(0, 0, 5);
+
+            //3. create a renderer (draws the scene into <canvas>)
+            const renderer = new THREE.WebGLRenderer();
+            renderer.setSize(600, 600);
+            document.body.appendChild(renderer.domElement);
+      
+            //4. create a geometry (cube shape) and a material (appearance)
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // green
+
+            //5. combine geometry + material into a mesh (the cube object)
+            const cube = new THREE.Mesh(geometry, material);
+            scene.add(cube); // add cube to scene
+
+            // 6. Render the scene once (no animation loop)
+            renderer.render(scene, camera);
+    </script>
+</body>
+</html>
