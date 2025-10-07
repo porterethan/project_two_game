@@ -1,237 +1,383 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>First Person Walker</title>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-        }
-        canvas {
-            display: block;
-        }
-        #startScreen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            color: white;
-            z-index: 100;
-        }
-        #startBtn {
-            padding: 20px 40px;
-            font-size: 24px;
-            background: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            margin-top: 20px;
-        }
-        #startBtn:hover {
-            background: #45a049;
-        }
-        #instructions {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 10px;
-            border-radius: 5px;
-            display: none;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Incoming Boxes Dodge</title>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+    canvas { display: block; }
+    #startScreen {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.8);
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      color: white; z-index: 100;
+    }
+    #startBtn {
+      padding: 20px 40px; font-size: 24px;
+      background: #4CAF50; color: white; border: none; border-radius: 8px;
+      cursor: pointer; margin-top: 20px;
+    }
+    #instructions {
+      position: absolute; top: 10px; left: 10px;
+      color: white; background: rgba(0,0,0,0.5);
+      padding: 10px; border-radius: 5px; display: none;
+    }
+    #ui {
+      position: absolute; top: 10px; right: 10px;
+      width: 220px; color: white; font-family: Arial, sans-serif;
+      user-select: none;
+    }
+    .bar-container {
+      background: rgba(255,255,255,0.2);
+      border-radius: 6px;
+      margin-bottom: 10px;
+      height: 24px;
+      width: 100%;
+      overflow: hidden;
+    }
+    .bar {
+      height: 100%;
+      border-radius: 6px;
+      transition: width 0.2s;
+    }
+    #healthBar { background: #d9534f; }
+    #staminaBar { background: #f0ad4e; }
+    #healthText, #staminaText {
+      margin-bottom: 5px;
+      font-weight: bold;
+      text-shadow: 0 0 3px black;
+    }
+  </style>
 </head>
 <body>
-    <div id="startScreen">
-        <h1>First Person Walker</h1>
-        <p>Use WASD or Arrow Keys to move</p>
-        <p>Move mouse to look around</p>
-        <button id="startBtn">START</button>
-    </div>
-    <div id="instructions">
-        WASD / Arrow Keys: Move<br>
-        Mouse: Look Around<br>
-        ESC: Release Mouse
-    </div>
+  <div id="startScreen">
+    <h1>Incoming Boxes Dodge</h1>
+    <p>Use WASD / Arrow Keys to move</p>
+    <p>Shift to sprint (consumes stamina)</p>
+    <p>Space to jump (consumes stamina)</p>
+    <p>Move mouse to look</p>
+    <button id="startBtn">START</button>
+  </div>
+  <div id="instructions">
+    WASD / Arrow: Move<br>
+    Shift: Sprint<br>
+    Space: Jump<br>
+    Mouse: Look Around<br>
+    ESC: Release Mouse
+  </div>
+  <div id="ui" style="display:none;">
+    <div id="healthText">Health</div>
+    <div class="bar-container"><div id="healthBar" class="bar" style="width: 100%;"></div></div>
+    <div id="staminaText">Stamina</div>
+    <div class="bar-container"><div id="staminaBar" class="bar" style="width: 100%;"></div></div>
+  </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script>
-        let scene, camera, renderer;
-        let moveForward = false, moveBackward = false;
-        let moveLeft = false, moveRight = false;
-        let velocity = new THREE.Vector3();
-        let direction = new THREE.Vector3();
-        const speed = 50.0;
-        
-        let euler = new THREE.Euler(0, 0, 0, 'YXZ');
-        let isLocked = false;
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cannon@0.6.2/build/cannon.min.js"></script>
 
-        function init() {
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x87CEEB);
-            scene.fog = new THREE.Fog(0x87CEEB, 0, 500);
+  <script>
+    const clock = new THREE.Clock();
+    let scene, camera, renderer;
+    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+    let sprinting = false, canJump = false;
 
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.y = 10;
+    const moveSpeed = 100;   // base move speed
+    const sprintMultiplier = 2.5;
+    const jumpVelocity = 5;
+    const playerRadius = 0.25;
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            document.body.appendChild(renderer.domElement);
+    let isLocked = false;
+    let euler = new THREE.Euler(0,0,0, 'YXZ');
 
-            // Ground
-            const groundGeo = new THREE.PlaneGeometry(1000, 1000);
-            const groundMat = new THREE.MeshLambertMaterial({ color: 0x3a9d23 });
-            const ground = new THREE.Mesh(groundGeo, groundMat);
-            ground.rotation.x = -Math.PI / 2;
-            scene.add(ground);
+    // Player stats
+    let stamina = 100;
+    const maxStamina = 100;
+    const staminaSprintDrain = 25;  // per second while sprinting
+    const staminaJumpCost = 20;
+    const staminaRecoverRate = 10;  // per second when not sprinting (slower recover)
+    let health = 100;
+    const maxHealth = 100;
 
-            // Grid helper
-            const gridHelper = new THREE.GridHelper(1000, 100, 0x000000, 0x000000);
-            gridHelper.material.opacity = 0.2;
-            gridHelper.material.transparent = true;
-            scene.add(gridHelper);
+    // Physics
+    let world, playerBody;
 
-            // Add some boxes to walk around
-            const boxGeo = new THREE.BoxGeometry(10, 10, 10);
-            for (let i = 0; i < 30; i++) {
-                const boxMat = new THREE.MeshLambertMaterial({ 
-                    color: Math.random() * 0xffffff 
-                });
-                const box = new THREE.Mesh(boxGeo, boxMat);
-                box.position.x = Math.random() * 400 - 200;
-                box.position.y = 5;
-                box.position.z = Math.random() * 400 - 200;
-                scene.add(box);
-            }
+    // Incoming boxes
+    const movingBoxes = [];
+    const movingBoxBodies = [];
 
-            // Lights
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-            scene.add(ambientLight);
+    function init() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87CEEB);
+      scene.fog = new THREE.Fog(0x87CEEB, 0, 500);
 
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(100, 100, 50);
-            scene.add(dirLight);
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
-            // Event listeners
-            document.addEventListener('keydown', onKeyDown);
-            document.addEventListener('keyup', onKeyUp);
-            document.addEventListener('mousemove', onMouseMove);
-            
-            document.getElementById('startBtn').addEventListener('click', startGame);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
 
-            window.addEventListener('resize', onWindowResize);
+      // Physics world
+      world = new CANNON.World();
+      world.gravity.set(0, -9.82, 0);
+
+      // Ground (static)
+      const groundBody = new CANNON.Body({ mass: 0 });
+      const groundShape = new CANNON.Plane();
+      groundBody.addShape(groundShape);
+      groundBody.quaternion.setFromEuler(-Math.PI/2, 0, 0);
+      world.addBody(groundBody);
+
+      // Visual ground
+      const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+      const groundMat = new THREE.MeshLambertMaterial({ color: 0x3a9d23 });
+      const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+      groundMesh.rotation.x = -Math.PI/2;
+      scene.add(groundMesh);
+
+      // Player body (sphere)
+      const playerShape = new CANNON.Sphere(playerRadius);
+      playerBody = new CANNON.Body({
+        mass: 5,
+        shape: playerShape,
+        position: new CANNON.Vec3(0, 10, 0),
+        linearDamping: 0.9
+      });
+      playerBody.fixedRotation = true;
+      world.addBody(playerBody);
+
+      // collision event for grounding and pushing back
+      playerBody.addEventListener('collide', function(e) {
+        const contact = e.contact;
+        let normal = contact.ni;
+        if (contact.bi.id === playerBody.id) {
+          normal = normal.clone().negate();
+        }
+        if (normal.y > 0.5) {
+          canJump = true;
+        } else {
+          // Push player backward if hit from front
+          if (normal.z > 0.5) {
+            playerBody.velocity.z = -10;
+            applyDamage(10);  // take 10 damage on hit
+          }
+        }
+      });
+
+      // Lights
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      dirLight.position.set(100,100,50);
+      scene.add(dirLight);
+
+      // Events
+      document.addEventListener('keydown', onKeyDown);
+      document.addEventListener('keyup', onKeyUp);
+      document.addEventListener('mousemove', onMouseMove);
+      document.getElementById('startBtn').addEventListener('click', startGame);
+      window.addEventListener('resize', onWindowResize);
+
+      updateUI();
+    }
+
+    function spawnBox() {
+        const boxWidth = 4;
+        const boxHeight = 2;
+        const boxDepth = 4;
+        const boxGeo = new THREE.BoxGeometry(boxWidth, boxHeight, boxDepth);
+        const boxMat = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+
+        // Random position in front of player
+        const xPos = (Math.random() - 0.5) * 40;
+        const yPos = 3 + Math.random() * 2;
+        const zPos = playerBody.position.z - 80;
+
+        const mesh = new THREE.Mesh(boxGeo, boxMat);
+        mesh.position.set(xPos, yPos, zPos);
+        scene.add(mesh);
+        movingBoxes.push(mesh);
+
+        const halfExtents = new CANNON.Vec3(boxWidth / 2, boxHeight / 2, boxDepth / 2);
+        const boxShape = new CANNON.Box(halfExtents);
+        const body = new CANNON.Body({
+            mass: 1,
+            shape: boxShape,
+            position: new CANNON.Vec3(xPos, yPos, zPos),
+            linearDamping: 0.0
+        });
+
+        // Disable gravity manually
+        body.gravityScale = 0; // If supported
+        body.force.set(0, 0, 0); // Clear any forces
+
+        // Compute direction from box to player
+        const direction = new CANNON.Vec3(
+            playerBody.position.x - xPos,
+            playerBody.position.y - yPos,
+            playerBody.position.z - zPos
+        );
+        direction.normalize();
+
+        const speed = 20; // Box speed toward player
+        body.velocity.set(
+            direction.x * speed,
+            direction.y * speed,
+            direction.z * speed
+        );
+
+        world.addBody(body);
+        movingBoxBodies.push(body);
         }
 
-        function startGame() {
-            document.getElementById('startScreen').style.display = 'none';
-            document.getElementById('instructions').style.display = 'block';
-            document.body.requestPointerLock();
-            
-            document.addEventListener('pointerlockchange', onPointerLockChange);
+    let spawnTimer = 0;
+
+    function startGame() {
+      document.getElementById('startScreen').style.display = 'none';
+      document.getElementById('instructions').style.display = 'block';
+      document.getElementById('ui').style.display = 'block';
+      document.body.requestPointerLock();
+      document.addEventListener('pointerlockchange', onPointerLockChange);
+    }
+
+    function onPointerLockChange() {
+      isLocked = (document.pointerLockElement === document.body);
+    }
+
+    function onKeyDown(e) {
+      switch(e.code) {
+        case 'ArrowUp': case 'KeyW': moveForward = true; break;
+        case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
+        case 'ArrowDown': case 'KeyS': moveBackward = true; break;
+        case 'ArrowRight': case 'KeyD': moveRight = true; break;
+        case 'ShiftLeft': case 'ShiftRight': sprinting = true; break;
+        case 'Space':
+          if (canJump && stamina >= staminaJumpCost) {
+            playerBody.velocity.y = jumpVelocity;
+            canJump = false;
+            stamina -= staminaJumpCost;
+            if (stamina < 0) stamina = 0;
+            updateUI();
+          }
+          break;
+      }
+    }
+
+    function onKeyUp(e) {
+      switch(e.code) {
+        case 'ArrowUp': case 'KeyW': moveForward = false; break;
+        case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
+        case 'ArrowDown': case 'KeyS': moveBackward = false; break;
+        case 'ArrowRight': case 'KeyD': moveRight = false; break;
+        case 'ShiftLeft': case 'ShiftRight': sprinting = false; break;
+      }
+    }
+
+    function onMouseMove(e) {
+      if (!isLocked) return;
+      const movementX = e.movementX || 0;
+      const movementY = e.movementY || 0;
+      euler.setFromQuaternion(camera.quaternion);
+      euler.y -= movementX * 0.002;
+      euler.x -= movementY * 0.002;
+      euler.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, euler.x));
+      camera.quaternion.setFromEuler(euler);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function applyDamage(amount) {
+      health -= amount;
+      if (health < 0) health = 0;
+      updateUI();
+      if (health === 0) {
+        alert('Game Over! You died.');
+        location.reload();
+      }
+    }
+
+    function updateUI() {
+      const healthPercent = (health / maxHealth) * 100;
+      const staminaPercent = (stamina / maxStamina) * 100;
+      document.getElementById('healthBar').style.width = healthPercent + '%';
+      document.getElementById('staminaBar').style.width = staminaPercent + '%';
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+
+      world.step(1/60, delta, 3);
+
+      // Spawn boxes periodically
+      spawnTimer += delta;
+      if (spawnTimer > 1.5) {
+        spawnBox();
+        spawnTimer = 0;
+      }
+
+      // Movement input and velocity calculation
+      const inputDir = new THREE.Vector3();
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      camDir.y = 0;
+      camDir.normalize();
+
+      const sideDir = new THREE.Vector3().crossVectors(camera.up, camDir).normalize();
+
+      if (moveForward) inputDir.add(camDir);
+      if (moveBackward) inputDir.sub(camDir);
+      if (moveLeft) inputDir.add(sideDir);
+      if (moveRight) inputDir.sub(sideDir);
+
+      inputDir.normalize();
+
+      // Handle sprinting and stamina
+      let currentSpeed = moveSpeed;
+      if (sprinting && stamina > 0) {
+        currentSpeed *= sprintMultiplier;
+        stamina -= staminaSprintDrain * delta;
+        if (stamina < 0) stamina = 0;
+      } else {
+        stamina += staminaRecoverRate * delta;
+        if (stamina > maxStamina) stamina = maxStamina;
+        sprinting = false; // forcibly stop sprint if no stamina
+      }
+      updateUI();
+
+      // Apply horizontal velocity based on input and speed
+      const v = playerBody.velocity;
+      v.x = inputDir.x * currentSpeed * delta;
+      v.z = inputDir.z * currentSpeed * delta;
+
+      // Sync camera with player position
+      camera.position.copy(playerBody.position);
+
+      // Update positions of incoming boxes and remove those behind player
+      for (let i = movingBoxes.length - 1; i >= 0; i--) {
+        const mesh = movingBoxes[i];
+        const body = movingBoxBodies[i];
+
+        mesh.position.copy(body.position);
+        mesh.quaternion.copy(body.quaternion);
+
+        // Remove box if it passed behind player or is too far
+        if (body.position.z > playerBody.position.z + 10) {
+          world.removeBody(body);
+          scene.remove(mesh);
+          movingBoxes.splice(i, 1);
+          movingBoxBodies.splice(i, 1);
         }
+      }
 
-        function onPointerLockChange() {
-            isLocked = document.pointerLockElement === document.body;
-        }
+      renderer.render(scene, camera);
+    }
 
-        function onKeyDown(e) {
-            switch(e.code) {
-                case 'ArrowUp':
-                case 'KeyW':
-                    moveForward = true;
-                    break;
-                case 'ArrowLeft':
-                case 'KeyA':
-                    moveLeft = true;
-                    break;
-                case 'ArrowDown':
-                case 'KeyS':
-                    moveBackward = true;
-                    break;
-                case 'ArrowRight':
-                case 'KeyD':
-                    moveRight = true;
-                    break;
-            }
-        }
-
-        function onKeyUp(e) {
-            switch(e.code) {
-                case 'ArrowUp':
-                case 'KeyW':
-                    moveForward = false;
-                    break;
-                case 'ArrowRight':
-                case 'KeyA':
-                    moveRight = false;
-                    break;
-                case 'ArrowDown':
-                case 'KeyS':
-                    moveBackward = false;
-                    break;
-                case 'ArrowLeft':
-                case 'KeyD':
-                    moveLeft = false;
-                    break;
-            }
-        }
-
-        function onMouseMove(e) {
-            if (!isLocked) return;
-
-            const movementX = e.movementX || 0;
-            const movementY = e.movementY || 0;
-
-            euler.setFromQuaternion(camera.quaternion);
-            euler.y -= movementX * 0.002;
-            euler.x -= movementY * 0.002;
-            euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x));
-            camera.quaternion.setFromEuler(euler);
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-
-            const delta = 0.016;
-
-            velocity.x -= velocity.x * 10.0 * delta;
-            velocity.z -= velocity.z * 10.0 * delta;
-
-            direction.z = Number(moveForward) - Number(moveBackward);
-            direction.x = Number(moveRight) - Number(moveLeft);
-            direction.normalize();
-
-            if (moveForward || moveBackward) velocity.z -= direction.z * speed * delta;
-            if (moveLeft || moveRight) velocity.x -= direction.x * speed * delta;
-
-            camera.translateX(velocity.x * delta);
-            camera.translateZ(velocity.z * delta);
-
-            // Keep camera above ground
-            camera.position.y = 10;
-
-            renderer.render(scene, camera);
-        }
-
-        init();
-        animate();
-    </script>
+    init();
+    animate();
+  </script>
 </body>
 </html>
