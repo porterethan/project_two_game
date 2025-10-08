@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Incoming Boxes Dodge</title>
+  <title>Space Station Cargo Dodge</title>
   <style>
     body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
     canvas { display: block; }
@@ -43,34 +43,101 @@
     }
     #healthBar { background: #d9534f; }
     #staminaBar { background: #f0ad4e; }
-    #healthText, #staminaText {
+    #healthText, #staminaText, #timerText {
       margin-bottom: 5px;
       font-weight: bold;
       text-shadow: 0 0 3px black;
+    }
+    #timerText {
+      font-size: 24px;
+      margin-bottom: 15px;
+      text-align: center;
+    }
+    #buttonPrompt {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 20px 40px;
+      font-size: 28px;
+      background: rgba(0, 0, 0, 0.8);
+      color: #4CAF50;
+      border: 3px solid #4CAF50;
+      border-radius: 15px;
+      font-weight: bold;
+      display: none;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.05); }
+    }
+    #pauseMenu {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.9);
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      z-index: 200;
+    }
+    #pauseMenu h2 {
+      font-size: 48px;
+      margin-bottom: 30px;
+    }
+    #resumeBtn {
+      padding: 15px 40px;
+      font-size: 24px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 20px;
     }
   </style>
 </head>
 <body>
   <div id="startScreen">
-    <h1>Incoming Boxes Dodge</h1>
+    <h1>Space Station Cargo Dodge</h1>
     <p>Use WASD / Arrow Keys to move</p>
     <p>Shift to sprint (consumes stamina)</p>
+    <p>Double-tap WASD to dash (consumes stamina)</p>
+    <p>C or Ctrl to crouch</p>
     <p>Space to jump (consumes stamina)</p>
+    <p>Tab to pause</p>
     <p>Move mouse to look</p>
+    <p><strong>Reach the green button and press E to win before time runs out!</strong></p>
     <button id="startBtn">START</button>
   </div>
   <div id="instructions">
     WASD / Arrow: Move<br>
     Shift: Sprint<br>
+    Double-tap: Dash<br>
+    C/Ctrl: Crouch<br>
     Space: Jump<br>
+    Tab: Pause<br>
+    E: Press Button (when near)<br>
     Mouse: Look Around<br>
     ESC: Release Mouse
   </div>
   <div id="ui" style="display:none;">
+    <div id="timerText">1:00</div>
     <div id="healthText">Health</div>
     <div class="bar-container"><div id="healthBar" class="bar" style="width: 100%;"></div></div>
     <div id="staminaText">Stamina</div>
     <div class="bar-container"><div id="staminaBar" class="bar" style="width: 100%;"></div></div>
+  </div>
+  <div id="buttonPrompt">Press E to Stop!</div>
+  <div id="pauseMenu">
+    <h2>PAUSED</h2>
+    <p>Press Tab to Resume</p>
+    <button id="resumeBtn">RESUME</button>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -80,38 +147,70 @@
     const clock = new THREE.Clock();
     let scene, camera, renderer;
     let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-    let sprinting = false, canJump = false;
+    let sprinting = false, canJump = false, crouching = false;
 
-    const moveSpeed = 100;   // base move speed
+    const moveSpeed = 100;
     const sprintMultiplier = 2.5;
-    const jumpVelocity = 5;
-    const playerRadius = 0.25;
+    const crouchMultiplier = 0.5;
+    const dashMultiplier = 5;
+    const jumpVelocity = 4;
+    const playerRadius = 0.3;
+    const standingHeight = 1.6;
+    const crouchingHeight = 0.8;
 
     let isLocked = false;
     let euler = new THREE.Euler(0,0,0, 'YXZ');
 
+    // Dash mechanics
+    let isDashing = false;
+    let dashTime = 0;
+    const dashDuration = 0.3;
+    let dashDirection = new THREE.Vector3();
+
+    // Double-tap detection
+    const doubleTapDelay = 0.3;
+    let lastWPress = 0, lastAPress = 0, lastSPress = 0, lastDPress = 0;
+
+    // Camera bob
+    let bobTime = 0;
+    const cameraStandingHeight = 0.7;
+    const cameraCrouchHeight = 0.3;
+
     // Player stats
-    let stamina = 100;
-    const maxStamina = 100;
-    const staminaSprintDrain = 25;  // per second while sprinting
-    const staminaJumpCost = 20;
-    const staminaRecoverRate = 10;  // per second when not sprinting (slower recover)
+    let stamina = 150;
+    const maxStamina = 150;
+    const staminaSprintDrain = 20;
+    const staminaJumpCost = 15;
+    const staminaDashCost = 25;
+    const staminaRecoverRate = 25;
     let health = 100;
     const maxHealth = 100;
 
     // Physics
     let world, playerBody;
 
-    // Incoming boxes
+    // Cargo crates
     const movingBoxes = [];
     const movingBoxBodies = [];
+    
+    // Stop button
+    let stopButtonMesh;
+    const buttonDistance = 20;
+
+    // Game state
+    let gameActive = false;
+    let gamePaused = false;
+    let timeRemaining = 60;
+    let gameEnded = false;
+    let lastDamageTime = 0;
+    const damageCooldown = 0.5;
 
     function init() {
       scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x87CEEB);
-      scene.fog = new THREE.Fog(0x87CEEB, 0, 500);
+      scene.background = new THREE.Color(0x0a0a15);
+      scene.fog = new THREE.Fog(0x0a0a15, 0, 200);
 
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 1000);
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
@@ -128,25 +227,116 @@
       groundBody.quaternion.setFromEuler(-Math.PI/2, 0, 0);
       world.addBody(groundBody);
 
-      // Visual ground
-      const groundGeo = new THREE.PlaneGeometry(1000, 1000);
-      const groundMat = new THREE.MeshLambertMaterial({ color: 0x3a9d23 });
+      // Visual ground (space station floor with grid)
+      const hallwayWidth = 4;
+      const hallwayLength = 500;
+      const groundGeo = new THREE.PlaneGeometry(hallwayWidth, hallwayLength);
+      const groundMat = new THREE.MeshLambertMaterial({ color: 0x2a2a3a });
       const groundMesh = new THREE.Mesh(groundGeo, groundMat);
       groundMesh.rotation.x = -Math.PI/2;
       scene.add(groundMesh);
 
-      // Player body (sphere)
-      const playerShape = new CANNON.Sphere(playerRadius);
+      // Add floor tiles - space station style
+      const tileSize = 1;
+      const floorTileGeo = new THREE.PlaneGeometry(tileSize, tileSize);
+      const darkTile = new THREE.MeshLambertMaterial({ color: 0x1a1a2a });
+      const lightTile = new THREE.MeshLambertMaterial({ color: 0x3a3a4a });
+      
+      for (let z = -hallwayLength/2; z < hallwayLength/2; z += tileSize) {
+        for (let x = -hallwayWidth/2; x < hallwayWidth/2; x += tileSize) {
+          const tileMesh = new THREE.Mesh(floorTileGeo, ((z/tileSize + x/tileSize) % 2 === 0) ? darkTile : lightTile);
+          tileMesh.rotation.x = -Math.PI/2;
+          tileMesh.position.set(x + tileSize/2, 0.001, z + tileSize/2);
+          scene.add(tileMesh);
+        }
+      }
+
+      // Hallway walls - metallic space station
+      const wallHeight = 2.0;
+      const wallThickness = 0.2;
+      
+      // Create wall tiles - space station panels
+      const wallTileGeo = new THREE.BoxGeometry(wallThickness, tileSize, tileSize);
+      const wallDarkTile = new THREE.MeshLambertMaterial({ color: 0x4a4a5a });
+      const wallLightTile = new THREE.MeshLambertMaterial({ color: 0x5a5a6a });
+
+      // Left wall tiles
+      for (let z = -hallwayLength/2; z < hallwayLength/2; z += tileSize) {
+        for (let y = 0; y < wallHeight; y += tileSize) {
+          const tileMesh = new THREE.Mesh(wallTileGeo, ((z/tileSize + y/tileSize) % 2 === 0) ? wallDarkTile : wallLightTile);
+          tileMesh.position.set(-hallwayWidth/2, y + tileSize/2, z + tileSize/2);
+          scene.add(tileMesh);
+        }
+      }
+
+      // Right wall tiles
+      for (let z = -hallwayLength/2; z < hallwayLength/2; z += tileSize) {
+        for (let y = 0; y < wallHeight; y += tileSize) {
+          const tileMesh = new THREE.Mesh(wallTileGeo, ((z/tileSize + y/tileSize) % 2 === 0) ? wallDarkTile : wallLightTile);
+          tileMesh.position.set(hallwayWidth/2, y + tileSize/2, z + tileSize/2);
+          scene.add(tileMesh);
+        }
+      }
+
+      // Physics for walls
+      const leftWallShape = new CANNON.Box(new CANNON.Vec3(wallThickness/2, wallHeight/2, hallwayLength/2));
+      const leftWallBody = new CANNON.Body({ mass: 0, shape: leftWallShape });
+      leftWallBody.position.set(-hallwayWidth/2, wallHeight/2, 0);
+      world.addBody(leftWallBody);
+
+      const rightWallShape = new CANNON.Box(new CANNON.Vec3(wallThickness/2, wallHeight/2, hallwayLength/2));
+      const rightWallBody = new CANNON.Body({ mass: 0, shape: rightWallShape });
+      rightWallBody.position.set(hallwayWidth/2, wallHeight/2, 0);
+      world.addBody(rightWallBody);
+
+      // Add ceiling collision
+      const ceilingShape = new CANNON.Box(new CANNON.Vec3(hallwayWidth/2, 0.1, hallwayLength/2));
+      const ceilingBody = new CANNON.Body({ mass: 0, shape: ceilingShape });
+      ceilingBody.position.set(0, wallHeight, 0);
+      world.addBody(ceilingBody);
+
+      // Add ceiling with tiles - space station panels
+      const ceilingDarkTile = new THREE.MeshLambertMaterial({ color: 0x2a2a3a });
+      const ceilingLightTile = new THREE.MeshLambertMaterial({ color: 0x3a3a4a });
+      for (let z = -hallwayLength/2; z < hallwayLength/2; z += tileSize) {
+        for (let x = -hallwayWidth/2; x < hallwayWidth/2; x += tileSize) {
+          const tileMesh = new THREE.Mesh(floorTileGeo, ((z/tileSize + x/tileSize) % 2 === 0) ? ceilingDarkTile : ceilingLightTile);
+          tileMesh.rotation.x = Math.PI/2;
+          tileMesh.position.set(x + tileSize/2, wallHeight - 0.001, z + tileSize/2);
+          scene.add(tileMesh);
+        }
+      }
+
+      // Create stop button at end of hallway - sci-fi style (smaller)
+      const buttonGeo = new THREE.BoxGeometry(0.4, 0.4, 0.2);
+      const buttonMat = new THREE.MeshLambertMaterial({ 
+        color: 0x00ff00,
+        emissive: 0x00ff00,
+        emissiveIntensity: 0.7
+      });
+      stopButtonMesh = new THREE.Mesh(buttonGeo, buttonMat);
+      stopButtonMesh.position.set(0, 1.0, -buttonDistance);
+      scene.add(stopButtonMesh);
+
+      // Add a pedestal for the button - metallic (smaller)
+      const pedestalGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.8, 16);
+      const pedestalMat = new THREE.MeshLambertMaterial({ color: 0x5a5a6a });
+      const pedestal = new THREE.Mesh(pedestalGeo, pedestalMat);
+      pedestal.position.set(0, 0.4, -buttonDistance);
+      scene.add(pedestal);
+
+      // Player body (cylinder for better crouching)
+      const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, standingHeight, 8);
       playerBody = new CANNON.Body({
         mass: 5,
         shape: playerShape,
-        position: new CANNON.Vec3(0, 10, 0),
+        position: new CANNON.Vec3(0, standingHeight/2 + 0.05, 5),
         linearDamping: 0.9
       });
       playerBody.fixedRotation = true;
       world.addBody(playerBody);
 
-      // collision event for grounding and pushing back
+      // collision event for grounding
       playerBody.addEventListener('collide', function(e) {
         const contact = e.contact;
         let normal = contact.ni;
@@ -155,19 +345,13 @@
         }
         if (normal.y > 0.5) {
           canJump = true;
-        } else {
-          // Push player backward if hit from front
-          if (normal.z > 0.5) {
-            playerBody.velocity.z = -10;
-            applyDamage(10);  // take 10 damage on hit
-          }
         }
       });
 
-      // Lights
-      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      dirLight.position.set(100,100,50);
+      // Lights - space station lighting
+      scene.add(new THREE.AmbientLight(0x6688aa, 0.3));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      dirLight.position.set(0, 10, 20);
       scene.add(dirLight);
 
       // Events
@@ -175,59 +359,104 @@
       document.addEventListener('keyup', onKeyUp);
       document.addEventListener('mousemove', onMouseMove);
       document.getElementById('startBtn').addEventListener('click', startGame);
+      document.getElementById('resumeBtn').addEventListener('click', togglePause);
       window.addEventListener('resize', onWindowResize);
 
       updateUI();
     }
 
     function spawnBox() {
-        const boxWidth = 4;
-        const boxHeight = 2;
-        const boxDepth = 4;
-        const boxGeo = new THREE.BoxGeometry(boxWidth, boxHeight, boxDepth);
-        const boxMat = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+        // Create space station crates (boxes only)
+        let mesh, shape, objectHeight;
+        
+        // Crate colors - metallic/industrial
+        const crateColors = [0x8B7355, 0x6B6B6B, 0x4a4a4a, 0x5a4a3a, 0x7a6a5a];
+        const color = crateColors[Math.floor(Math.random() * crateColors.length)];
+        const mat = new THREE.MeshLambertMaterial({ color: color });
+        
+        // Random crate sizes - some tall enough to crouch under
+        const width = 0.3 + Math.random() * 0.6;
+        const height = 0.3 + Math.random() * 0.8;
+        const depth = 0.3 + Math.random() * 0.6;
+        
+        const boxGeo = new THREE.BoxGeometry(width, height, depth);
+        mesh = new THREE.Mesh(boxGeo, mat);
+        
+        // Add some edge lines to make it look like a crate
+        const edges = new THREE.EdgesGeometry(boxGeo);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+        const wireframe = new THREE.LineSegments(edges, lineMat);
+        mesh.add(wireframe);
+        
+        shape = new CANNON.Box(new CANNON.Vec3(width/2, height/2, depth/2));
+        objectHeight = height;
 
-        // Random position in front of player
-        const xPos = (Math.random() - 0.5) * 40;
-        const yPos = 3 + Math.random() * 2;
-        const zPos = playerBody.position.z - 80;
+        // Spawn within hallway bounds
+        const hallwayWidth = 3.5;
+        const xPos = (Math.random() - 0.5) * hallwayWidth;
+        // Spawn at different heights - some on ground, some at head height requiring crouch
+        const spawnType = Math.random();
+        let yPos;
+        if (spawnType < 0.5) {
+            // Ground level crates
+            yPos = objectHeight / 2 + 0.05;
+        } else {
+            // Higher crates that might require crouching (around 0.9-1.3 units high)
+            yPos = 0.9 + Math.random() * 0.4;
+        }
+        const zPos = playerBody.position.z - 50;
 
-        const mesh = new THREE.Mesh(boxGeo, boxMat);
         mesh.position.set(xPos, yPos, zPos);
         scene.add(mesh);
         movingBoxes.push(mesh);
 
-        const halfExtents = new CANNON.Vec3(boxWidth / 2, boxHeight / 2, boxDepth / 2);
-        const boxShape = new CANNON.Box(halfExtents);
         const body = new CANNON.Body({
             mass: 1,
-            shape: boxShape,
+            shape: shape,
             position: new CANNON.Vec3(xPos, yPos, zPos),
             linearDamping: 0.0
         });
 
-        // Disable gravity manually
-        body.gravityScale = 0; // If supported
-        body.force.set(0, 0, 0); // Clear any forces
+        // Set velocity to go straight forward (positive Z direction)
+        const speed = 20;
+        body.velocity.set(0, 0, speed);
 
-        // Compute direction from box to player
-        const direction = new CANNON.Vec3(
-            playerBody.position.x - xPos,
-            playerBody.position.y - yPos,
-            playerBody.position.z - zPos
-        );
-        direction.normalize();
+        // Store the intended velocity for maintaining momentum
+        body.userData = { intendedSpeed: speed };
 
-        const speed = 20; // Box speed toward player
-        body.velocity.set(
-            direction.x * speed,
-            direction.y * speed,
-            direction.z * speed
-        );
+        // Prevent bouncing on ground collision
+        body.addEventListener('collide', function(e) {
+            const contact = e.contact;
+            const otherBody = contact.bi.id === body.id ? contact.bj : contact.bi;
+            let normal = contact.ni;
+            if (contact.bi.id === body.id) {
+                normal = normal.clone().negate();
+            }
+            
+            // If hitting the player, apply damage with cooldown
+            if (otherBody === playerBody) {
+                const currentTime = performance.now() / 1000;
+                if (currentTime - lastDamageTime > damageCooldown) {
+                    applyDamage(15);
+                    lastDamageTime = currentTime;
+                }
+                // Push player backwards
+                playerBody.velocity.z += 15;
+                playerBody.velocity.x += normal.x * 5;
+                // Restore forward velocity to push through player
+                body.velocity.z = speed;
+            }
+            
+            // If hitting ground (normal pointing up)
+            if (normal.y > 0.5) {
+                body.velocity.y = 0;
+                body.angularVelocity.set(0, 0, 0);
+            }
+        });
 
         world.addBody(body);
         movingBoxBodies.push(body);
-        }
+    }
 
     let spawnTimer = 0;
 
@@ -237,6 +466,8 @@
       document.getElementById('ui').style.display = 'block';
       document.body.requestPointerLock();
       document.addEventListener('pointerlockchange', onPointerLockChange);
+      gameActive = true;
+      gameEnded = false;
     }
 
     function onPointerLockChange() {
@@ -244,14 +475,73 @@
     }
 
     function onKeyDown(e) {
+      const currentTime = performance.now() / 1000;
+      
+      // Prevent default for Ctrl to avoid browser shortcuts
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
+        e.preventDefault();
+      }
+      
+      // Tab key to pause/unpause
+      if (e.code === 'Tab') {
+        e.preventDefault();
+        if (gameActive && !gameEnded) {
+          togglePause();
+        }
+        return;
+      }
+      
+      // Don't process other inputs if paused
+      if (gamePaused) return;
+      
       switch(e.code) {
-        case 'ArrowUp': case 'KeyW': moveForward = true; break;
-        case 'ArrowLeft': case 'KeyA': moveLeft = true; break;
-        case 'ArrowDown': case 'KeyS': moveBackward = true; break;
-        case 'ArrowRight': case 'KeyD': moveRight = true; break;
+        case 'ArrowUp': case 'KeyW': 
+          if (!e.repeat && currentTime - lastWPress < doubleTapDelay && !isDashing && stamina >= staminaDashCost) {
+            startDash('forward');
+          }
+          if (!e.repeat) lastWPress = currentTime;
+          moveForward = true; 
+          break;
+        case 'ArrowLeft': case 'KeyA': 
+          if (!e.repeat && currentTime - lastAPress < doubleTapDelay && !isDashing && stamina >= staminaDashCost) {
+            startDash('left');
+          }
+          if (!e.repeat) lastAPress = currentTime;
+          moveLeft = true; 
+          break;
+        case 'ArrowDown': case 'KeyS': 
+          if (!e.repeat && currentTime - lastSPress < doubleTapDelay && !isDashing && stamina >= staminaDashCost) {
+            startDash('backward');
+          }
+          if (!e.repeat) lastSPress = currentTime;
+          moveBackward = true; 
+          break;
+        case 'ArrowRight': case 'KeyD': 
+          if (!e.repeat && currentTime - lastDPress < doubleTapDelay && !isDashing && stamina >= staminaDashCost) {
+            startDash('right');
+          }
+          if (!e.repeat) lastDPress = currentTime;
+          moveRight = true; 
+          break;
         case 'ShiftLeft': case 'ShiftRight': sprinting = true; break;
+        case 'ControlLeft': case 'ControlRight': case 'KeyC':
+          crouching = true;
+          updatePlayerHitbox();
+          break;
+        case 'KeyE':
+          if (gameActive && !gameEnded) {
+            const distanceToButton = Math.sqrt(
+              Math.pow(playerBody.position.x - stopButtonMesh.position.x, 2) +
+              Math.pow(playerBody.position.y - stopButtonMesh.position.y, 2) +
+              Math.pow(playerBody.position.z - stopButtonMesh.position.z, 2)
+            );
+            if (distanceToButton < 2.5) {
+              endGame(true);
+            }
+          }
+          break;
         case 'Space':
-          if (canJump && stamina >= staminaJumpCost) {
+          if (canJump && stamina >= staminaJumpCost && !crouching) {
             playerBody.velocity.y = jumpVelocity;
             canJump = false;
             stamina -= staminaJumpCost;
@@ -262,18 +552,90 @@
       }
     }
 
+    function startDash(direction) {
+      isDashing = true;
+      dashTime = 0;
+      stamina -= staminaDashCost;
+      if (stamina < 0) stamina = 0;
+      
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      camDir.y = 0;
+      camDir.normalize();
+      const sideDir = new THREE.Vector3().crossVectors(camera.up, camDir).normalize();
+      
+      dashDirection.set(0, 0, 0);
+      if (direction === 'forward') dashDirection.copy(camDir);
+      else if (direction === 'backward') dashDirection.copy(camDir).negate();
+      else if (direction === 'left') dashDirection.copy(sideDir);
+      else if (direction === 'right') dashDirection.copy(sideDir).negate();
+      
+      updateUI();
+    }
+
+    function togglePause() {
+      gamePaused = !gamePaused;
+      if (gamePaused) {
+        document.getElementById('pauseMenu').style.display = 'flex';
+        document.exitPointerLock();
+      } else {
+        document.getElementById('pauseMenu').style.display = 'none';
+        document.body.requestPointerLock();
+      }
+    }
+
+    function updatePlayerHitbox() {
+      const oldPos = playerBody.position.clone();
+      const oldVel = playerBody.velocity.clone();
+      
+      world.removeBody(playerBody);
+      
+      const currentHeight = crouching ? crouchingHeight : standingHeight;
+      const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, currentHeight, 8);
+      
+      const newYPos = currentHeight/2 + 0.05;
+      
+      playerBody = new CANNON.Body({
+        mass: 5,
+        shape: playerShape,
+        position: new CANNON.Vec3(oldPos.x, newYPos, oldPos.z),
+        linearDamping: 0.9
+      });
+      playerBody.velocity.copy(oldVel);
+      playerBody.fixedRotation = true;
+      
+      playerBody.addEventListener('collide', function(e) {
+        const contact = e.contact;
+        let normal = contact.ni;
+        if (contact.bi.id === playerBody.id) {
+          normal = normal.clone().negate();
+        }
+        if (normal.y > 0.5) {
+          canJump = true;
+        }
+      });
+      
+      world.addBody(playerBody);
+    }
+
     function onKeyUp(e) {
+      if (gamePaused) return;
+      
       switch(e.code) {
         case 'ArrowUp': case 'KeyW': moveForward = false; break;
         case 'ArrowLeft': case 'KeyA': moveLeft = false; break;
         case 'ArrowDown': case 'KeyS': moveBackward = false; break;
         case 'ArrowRight': case 'KeyD': moveRight = false; break;
         case 'ShiftLeft': case 'ShiftRight': sprinting = false; break;
+        case 'ControlLeft': case 'ControlRight': case 'KeyC': 
+          crouching = false;
+          updatePlayerHitbox();
+          break;
       }
     }
 
     function onMouseMove(e) {
-      if (!isLocked) return;
+      if (!isLocked || gamePaused) return;
       const movementX = e.movementX || 0;
       const movementY = e.movementY || 0;
       euler.setFromQuaternion(camera.quaternion);
@@ -293,10 +655,20 @@
       health -= amount;
       if (health < 0) health = 0;
       updateUI();
-      if (health === 0) {
-        alert('Game Over! You died.');
-        location.reload();
+      if (health === 0 && !gameEnded) {
+        endGame(false);
       }
+    }
+
+    function endGame(won) {
+      gameEnded = true;
+      gameActive = false;
+      if (won) {
+        alert('YOU WIN! You survived and pressed E in time!');
+      } else {
+        alert('GAME OVER! ' + (health === 0 ? 'You died.' : 'Time ran out!'));
+      }
+      location.reload();
     }
 
     function updateUI() {
@@ -304,22 +676,42 @@
       const staminaPercent = (stamina / maxStamina) * 100;
       document.getElementById('healthBar').style.width = healthPercent + '%';
       document.getElementById('staminaBar').style.width = staminaPercent + '%';
+      
+      const minutes = Math.floor(timeRemaining / 60);
+      const seconds = Math.floor(timeRemaining % 60);
+      document.getElementById('timerText').textContent = 
+        minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
     }
 
     function animate() {
       requestAnimationFrame(animate);
+      
+      if (gamePaused) {
+        renderer.render(scene, camera);
+        return;
+      }
+      
       const delta = clock.getDelta();
 
       world.step(1/60, delta, 3);
 
-      // Spawn boxes periodically
-      spawnTimer += delta;
-      if (spawnTimer > 1.5) {
-        spawnBox();
-        spawnTimer = 0;
+      if (gameActive && !gameEnded) {
+        timeRemaining -= delta;
+        if (timeRemaining <= 0) {
+          timeRemaining = 0;
+          endGame(false);
+        }
+        updateUI();
       }
 
-      // Movement input and velocity calculation
+      if (gameActive && !gameEnded) {
+        spawnTimer += delta;
+        if (spawnTimer > 1.0) {
+          spawnBox();
+          spawnTimer = 0;
+        }
+      }
+
       const inputDir = new THREE.Vector3();
       const camDir = new THREE.Vector3();
       camera.getWorldDirection(camDir);
@@ -328,49 +720,98 @@
 
       const sideDir = new THREE.Vector3().crossVectors(camera.up, camDir).normalize();
 
-      if (moveForward) inputDir.add(camDir);
-      if (moveBackward) inputDir.sub(camDir);
-      if (moveLeft) inputDir.add(sideDir);
-      if (moveRight) inputDir.sub(sideDir);
-
-      inputDir.normalize();
-
-      // Handle sprinting and stamina
-      let currentSpeed = moveSpeed;
-      if (sprinting && stamina > 0) {
-        currentSpeed *= sprintMultiplier;
-        stamina -= staminaSprintDrain * delta;
-        if (stamina < 0) stamina = 0;
-      } else {
-        stamina += staminaRecoverRate * delta;
-        if (stamina > maxStamina) stamina = maxStamina;
-        sprinting = false; // forcibly stop sprint if no stamina
+      if (isDashing) {
+        dashTime += delta;
+        if (dashTime >= dashDuration) {
+          isDashing = false;
+        }
       }
-      updateUI();
 
-      // Apply horizontal velocity based on input and speed
-      const v = playerBody.velocity;
-      v.x = inputDir.x * currentSpeed * delta;
-      v.z = inputDir.z * currentSpeed * delta;
+      if (isDashing) {
+        const v = playerBody.velocity;
+        v.x = dashDirection.x * moveSpeed * dashMultiplier * delta;
+        v.z = dashDirection.z * moveSpeed * dashMultiplier * delta;
+      } else {
+        if (moveForward) inputDir.add(camDir);
+        if (moveBackward) inputDir.sub(camDir);
+        if (moveLeft) inputDir.add(sideDir);
+        if (moveRight) inputDir.sub(sideDir);
 
-      // Sync camera with player position
-      camera.position.copy(playerBody.position);
+        inputDir.normalize();
 
-      // Update positions of incoming boxes and remove those behind player
+        let currentSpeed = moveSpeed;
+        
+        if (crouching) {
+          currentSpeed *= crouchMultiplier;
+        } else if (sprinting && stamina > 0 && (moveForward || moveBackward || moveLeft || moveRight)) {
+          currentSpeed *= sprintMultiplier;
+          stamina -= staminaSprintDrain * delta;
+          if (stamina < 0) stamina = 0;
+        } else {
+          stamina += staminaRecoverRate * delta;
+          if (stamina > maxStamina) stamina = maxStamina;
+          if (stamina <= 0) sprinting = false;
+        }
+        updateUI();
+
+        const v = playerBody.velocity;
+        v.x = inputDir.x * currentSpeed * delta;
+        v.z = inputDir.z * currentSpeed * delta;
+      }
+
+      // Camera bob animation
+      const currentCameraHeight = crouching ? cameraCrouchHeight : cameraStandingHeight;
+      
+      if ((moveForward || moveBackward || moveLeft || moveRight) && canJump && !isDashing) {
+        bobTime += delta * (sprinting ? 12 : 8);
+        const bobAmount = sprinting ? 0.03 : 0.02;
+        camera.position.y = playerBody.position.y + currentCameraHeight + Math.sin(bobTime) * bobAmount;
+      } else {
+        const targetHeight = playerBody.position.y + currentCameraHeight;
+        camera.position.y += (targetHeight - camera.position.y) * 0.1;
+      }
+
+      camera.position.x = playerBody.position.x;
+      camera.position.z = playerBody.position.z;
+
+      if (gameActive && !gameEnded) {
+        const distanceToButton = Math.sqrt(
+          Math.pow(playerBody.position.x - stopButtonMesh.position.x, 2) +
+          Math.pow(playerBody.position.y - stopButtonMesh.position.y, 2) +
+          Math.pow(playerBody.position.z - stopButtonMesh.position.z, 2)
+        );
+        
+        if (distanceToButton < 2.5) {
+          document.getElementById('buttonPrompt').style.display = 'block';
+        } else {
+          document.getElementById('buttonPrompt').style.display = 'none';
+        }
+      }
+
       for (let i = movingBoxes.length - 1; i >= 0; i--) {
         const mesh = movingBoxes[i];
         const body = movingBoxBodies[i];
 
+        body.force.y = body.mass * Math.abs(world.gravity.y);
+        
+        if (body.userData && body.userData.intendedSpeed) {
+          body.velocity.z = body.userData.intendedSpeed;
+        }
+
         mesh.position.copy(body.position);
         mesh.quaternion.copy(body.quaternion);
 
-        // Remove box if it passed behind player or is too far
         if (body.position.z > playerBody.position.z + 10) {
           world.removeBody(body);
           scene.remove(mesh);
           movingBoxes.splice(i, 1);
           movingBoxBodies.splice(i, 1);
         }
+      }
+
+      if (stopButtonMesh) {
+        const pulseScale = 1 + Math.sin(Date.now() * 0.005) * 0.1;
+        stopButtonMesh.scale.set(pulseScale, pulseScale, pulseScale);
       }
 
       renderer.render(scene, camera);
