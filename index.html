@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Space Station Cargo Dodge</title>
   <style>
+    .container img{
+      position: relative;
+      text-align: center;
+    }
     body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
     canvas { display: block; }
     #startScreen {
@@ -13,6 +17,14 @@
       display: flex; flex-direction: column; justify-content: center; align-items: center;
       color: white; z-index: 100;
     }
+    #startScreen img {
+      width: 20vmin;         
+      height: 20vmin;      
+      object-fit: contain; 
+      border-radius: 10px;
+      margin-bottom: 20px;   
+    }
+  
     #startBtn {
       padding: 20px 40px; font-size: 24px;
       background: #4CAF50; color: white; border: none; border-radius: 8px;
@@ -104,6 +116,7 @@
 </head>
 <body>
   <div id="startScreen">
+    <img src="space_dodger.png">
     <h1>Space Station Cargo Dodge</h1>
     <p>Use WASD / Arrow Keys to move</p>
     <p>Shift to sprint (consumes stamina)</p>
@@ -204,6 +217,9 @@
     let gameEnded = false;
     let lastDamageTime = 0;
     const damageCooldown = 0.5;
+
+    let backgroundAudio;
+ 
 
     function init() {
       scene = new THREE.Scene();
@@ -468,6 +484,13 @@
       document.addEventListener('pointerlockchange', onPointerLockChange);
       gameActive = true;
       gameEnded = false;
+
+      if (!backgroundAudio) {
+        backgroundAudio = new Audio('space_sound.mp3');
+        backgroundAudio.loop = true;
+        backgroundAudio.volume = 0.5;
+        backgroundAudio.play();
+      }
     }
 
     function onPointerLockChange() {
