@@ -162,7 +162,7 @@
     let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
     let sprinting = false, canJump = false, crouching = false;
 
-    const moveSpeed = 100;
+    const moveSpeed = 200;
     const sprintMultiplier = 2.5;
     const crouchMultiplier = 0.5;
     const dashMultiplier = 5;
@@ -341,16 +341,17 @@
       pedestal.position.set(0, 0.4, -buttonDistance);
       scene.add(pedestal);
 
-      // Player body (cylinder for better crouching)
-      const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, standingHeight, 8);
-      playerBody = new CANNON.Body({
+      // Player body (tall cylinder for proper hitbox)
+        const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, standingHeight, 16);
+        playerBody = new CANNON.Body({
         mass: 5,
         shape: playerShape,
         position: new CANNON.Vec3(0, standingHeight/2 + 0.05, 5),
         linearDamping: 0.9
-      });
-      playerBody.fixedRotation = true;
-      world.addBody(playerBody);
+        });
+        playerBody.fixedRotation = true;
+        playerBody.angularDamping = 1.0;
+        world.addBody(playerBody);
 
       // collision event for grounding
       playerBody.addEventListener('collide', function(e) {
@@ -608,38 +609,40 @@
     }
 
     function updatePlayerHitbox() {
-      const oldPos = playerBody.position.clone();
-      const oldVel = playerBody.velocity.clone();
-      
-      world.removeBody(playerBody);
-      
-      const currentHeight = crouching ? crouchingHeight : standingHeight;
-      const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, currentHeight, 8);
-      
-      const newYPos = currentHeight/2 + 0.05;
-      
-      playerBody = new CANNON.Body({
-        mass: 5,
-        shape: playerShape,
-        position: new CANNON.Vec3(oldPos.x, newYPos, oldPos.z),
-        linearDamping: 0.9
-      });
-      playerBody.velocity.copy(oldVel);
-      playerBody.fixedRotation = true;
-      
-      playerBody.addEventListener('collide', function(e) {
-        const contact = e.contact;
-        let normal = contact.ni;
-        if (contact.bi.id === playerBody.id) {
-          normal = normal.clone().negate();
+        const oldPos = playerBody.position.clone();
+        const oldVel = playerBody.velocity.clone();
+        
+        world.removeBody(playerBody);
+        
+        // Always use sphere for smooth ground collision
+        const currentHeight = crouching ? crouchingHeight : standingHeight;
+        const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, currentHeight, 16);
+
+        const newYPos = currentHeight/2 + 0.05;
+        
+        playerBody = new CANNON.Body({
+            mass: 5,
+            shape: playerShape,
+            position: new CANNON.Vec3(oldPos.x, newYPos, oldPos.z),
+            linearDamping: 0.9
+        });
+        playerBody.velocity.copy(oldVel);
+        playerBody.fixedRotation = true;
+        playerBody.angularDamping = 1.0;
+        
+        playerBody.addEventListener('collide', function(e) {
+            const contact = e.contact;
+            let normal = contact.ni;
+            if (contact.bi.id === playerBody.id) {
+            normal = normal.clone().negate();
+            }
+            if (normal.y > 0.5) {
+            canJump = true;
+            }
+        });
+        
+        world.addBody(playerBody);
         }
-        if (normal.y > 0.5) {
-          canJump = true;
-        }
-      });
-      
-      world.addBody(playerBody);
-    }
 
     function onKeyUp(e) {
       if (gamePaused) return;
