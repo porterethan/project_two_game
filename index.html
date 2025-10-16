@@ -73,8 +73,8 @@
       padding: 20px 40px;
       font-size: 28px;
       background: rgba(0, 0, 0, 0.8);
-      color: #4CAF50;
-      border: 3px solid #4CAF50;
+      color: #ff0000;
+      border: 3px solid #ff0000;
       border-radius: 15px;
       font-weight: bold;
       display: none;
@@ -112,11 +112,60 @@
       cursor: pointer;
       margin-top: 20px;
     }
+
+    /* Status message area */
+    #statusContainer {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      top: 14%;
+      z-index: 150;
+      pointer-events: none;
+    }
+    .statusMsg {
+      background: rgba(0,0,0,0.7);
+      color: #ffd5dd;
+      padding: 8px 14px;
+      margin-top: 8px;
+      border-radius: 12px;
+      font-weight: bold;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.6);
+      opacity: 0;
+      transform: translateY(-10px);
+      transition: opacity 0.25s, transform 0.25s;
+      pointer-events: none;
+    }
+    .statusMsg.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* End screen (replay) */
+    #endScreen {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.95);
+      display: none; flex-direction: column; justify-content: center; align-items: center;
+      color: white; z-index: 300;
+    }
+    #endScreen h1 { font-size: 48px; margin-bottom: 12px; }
+    #endScreen p { font-size: 20px; margin-bottom: 20px; }
+    #replayBtn, #quitBtn {
+      padding: 12px 28px; font-size: 20px; border-radius: 8px; border: none; cursor: pointer;
+      margin: 8px;
+    }
+    #replayBtn { background: #4CAF50; color: white; }
+    #quitBtn { background: #777; color: white; }
+
+    /* small responsive tune */
+    @media (max-width:600px) {
+      #ui { width: 160px; }
+      #timerText { font-size: 18px; }
+    }
   </style>
 </head>
 <body>
   <div id="startScreen">
-    <img src="space_dodger.png">
+    <img src="space_dodger.png" alt="logo">
     <h1>Space Station Cargo Dodge</h1>
     <p>Use WASD / Arrow Keys to move</p>
     <p>Shift to sprint (consumes stamina)</p>
@@ -153,6 +202,19 @@
     <button id="resumeBtn">RESUME</button>
   </div>
 
+  <!-- Status messages -->
+  <div id="statusContainer"></div>
+
+  <!-- End screen / replay -->
+  <div id="endScreen">
+    <h1 id="endTitle">YOU WIN!</h1>
+    <p id="endMessage">You survived and pressed the button in time.</p>
+    <div>
+      <button id="replayBtn">REPLAY</button>
+      <button id="quitBtn">QUIT</button>
+    </div>
+  </div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/cannon@0.6.2/build/cannon.min.js"></script>
 
@@ -161,6 +223,7 @@
     let scene, camera, renderer;
     let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
     let sprinting = false, canJump = false, crouching = false;
+    let spacePullForce = 0; 
 
     const moveSpeed = 200;
     const sprintMultiplier = 2.5;
@@ -170,6 +233,8 @@
     const playerRadius = 0.3;
     const standingHeight = 1.6;
     const crouchingHeight = 0.8;
+    const pullIncreaseRate = .5; 
+    let beingPulled = false; 
 
     let isLocked = false;
     let euler = new THREE.Euler(0,0,0, 'YXZ');
@@ -219,7 +284,37 @@
     const damageCooldown = 0.5;
 
     let backgroundAudio;
- 
+
+    // Flickering lights
+    const flickerLights = [];
+    let flickerTimer = 0;
+    let nextFlickerBurst = 6 + Math.random() * 6; // occasional brighter bursts
+
+    // Status message helper
+    const statusContainer = document.getElementById('statusContainer');
+
+    function showStatus(text, duration = 1500) {
+      const el = document.createElement('div');
+      el.className = 'statusMsg';
+      el.textContent = text;
+      statusContainer.appendChild(el);
+      // trigger show
+      requestAnimationFrame(() => el.classList.add('show'));
+      setTimeout(() => {
+        el.classList.remove('show');
+        setTimeout(() => statusContainer.removeChild(el), 350);
+      }, duration);
+    }
+
+    // Helper to quickly show low stamina warning with throttle
+    let lastLowStamShown = 0;
+    function maybeLowStamina() {
+      const now = performance.now();
+      if (stamina < 30 && now - lastLowStamShown > 2000) {
+        showStatus('LOW STAMINA!');
+        lastLowStamShown = now;
+      }
+    }
 
     function init() {
       scene = new THREE.Scene();
@@ -342,16 +437,16 @@
       scene.add(pedestal);
 
       // Player body (tall cylinder for proper hitbox)
-        const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, standingHeight, 16);
-        playerBody = new CANNON.Body({
+      const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, standingHeight, 16);
+      playerBody = new CANNON.Body({
         mass: 5,
         shape: playerShape,
-        position: new CANNON.Vec3(0, standingHeight/2 + 0.05, 5),
+        position: new CANNON.Vec3(0, standingHeight/2 + 0.05, 50),
         linearDamping: 0.9
-        });
-        playerBody.fixedRotation = true;
-        playerBody.angularDamping = 1.0;
-        world.addBody(playerBody);
+      });
+      playerBody.fixedRotation = true;
+      playerBody.angularDamping = 1.0;
+      world.addBody(playerBody);
 
       // collision event for grounding
       playerBody.addEventListener('collide', function(e) {
@@ -365,11 +460,36 @@
         }
       });
 
-      // Lights - space station lighting
-      scene.add(new THREE.AmbientLight(0x6688aa, 0.3));
-      const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      // Lights - space station lighting: ambient + directional + flicker points
+      scene.add(new THREE.AmbientLight(0x6688aa, 0.25));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.35);
       dirLight.position.set(0, 10, 20);
       scene.add(dirLight);
+
+      // Create subtle flickering strip lights along ceiling
+      const halfCount = 20; // lights in each direction
+      for (let i = -halfCount; i <= halfCount; i++) {
+        const zPos = i * 8; // symmetrical spacing from 0
+        const light = new THREE.PointLight(0xff3333, 0.6, 25, 2);
+        light.position.set(0, wallHeight - 0.2, zPos);
+
+        const bulb = new THREE.Mesh(
+          new THREE.SphereGeometry(0.06, 6, 6),
+          new THREE.MeshBasicMaterial({ color: 0xff3333 })
+          );
+        bulb.position.copy(light.position);
+
+        scene.add(bulb);
+        scene.add(light);
+
+        flickerLights.push({
+          light,
+          bulb,
+          baseIntensity: 0.6 + Math.random() * 0.25,
+          seed: Math.random() * 1000,
+        });
+      }
+
 
       // Events
       document.addEventListener('keydown', onKeyDown);
@@ -377,6 +497,8 @@
       document.addEventListener('mousemove', onMouseMove);
       document.getElementById('startBtn').addEventListener('click', startGame);
       document.getElementById('resumeBtn').addEventListener('click', togglePause);
+      document.getElementById('replayBtn').addEventListener('click', resetGame);
+      document.getElementById('quitBtn').addEventListener('click', () => { location.reload(); });
       window.addEventListener('resize', onWindowResize);
 
       updateUI();
@@ -456,6 +578,7 @@
                 if (currentTime - lastDamageTime > damageCooldown) {
                     applyDamage(15);
                     lastDamageTime = currentTime;
+                    showStatus('HIT!');
                 }
                 // Push player backwards
                 playerBody.velocity.z += 15;
@@ -490,8 +613,10 @@
         backgroundAudio = new Audio('space_sound.mp3');
         backgroundAudio.loop = true;
         backgroundAudio.volume = 0.5;
-        backgroundAudio.play();
+        backgroundAudio.play().catch(()=>{}); // ignore autoplay errors quietly
       }
+
+      showStatus('DASH READY!', 1200);
     }
 
     function onPointerLockChange() {
@@ -560,6 +685,7 @@
               Math.pow(playerBody.position.z - stopButtonMesh.position.z, 2)
             );
             if (distanceToButton < 2.5) {
+              showStatus('BUTTON PRESSED!', 1800);
               endGame(true);
             }
           }
@@ -577,6 +703,10 @@
     }
 
     function startDash(direction) {
+      if (stamina < staminaDashCost) {
+        showStatus('NOT ENOUGH STAMINA');
+        return;
+      }
       isDashing = true;
       dashTime = 0;
       stamina -= staminaDashCost;
@@ -594,6 +724,7 @@
       else if (direction === 'left') dashDirection.copy(sideDir);
       else if (direction === 'right') dashDirection.copy(sideDir).negate();
       
+      showStatus('DASH!', 700);
       updateUI();
     }
 
@@ -614,7 +745,7 @@
         
         world.removeBody(playerBody);
         
-        // Always use sphere for smooth ground collision
+        // Always use cylinder for smooth ground collision
         const currentHeight = crouching ? crouchingHeight : standingHeight;
         const playerShape = new CANNON.Cylinder(playerRadius, playerRadius, currentHeight, 16);
 
@@ -689,12 +820,58 @@
     function endGame(won) {
       gameEnded = true;
       gameActive = false;
+
+      // Show end screen overlay instead of alert
+      const endScreen = document.getElementById('endScreen');
+      const endTitle = document.getElementById('endTitle');
+      const endMessage = document.getElementById('endMessage');
+
       if (won) {
-        alert('YOU WIN! You survived and pressed E in time!');
+        endTitle.textContent = 'YOU WIN!';
+        endMessage.textContent = 'You survived and pressed the button in time.';
       } else {
-        alert('GAME OVER! ' + (health === 0 ? 'You died.' : 'Time ran out!'));
+        endTitle.textContent = 'GAME OVER';
+        endMessage.textContent = health === 0 ? 'You died.' : 'Time ran out!';
       }
-      location.reload();
+      endScreen.style.display = 'flex';
+      document.exitPointerLock();
+    }
+
+    // Reset the game without a full reload
+    function resetGame() {
+      // remove all moving crates
+      for (let b of movingBoxBodies) {
+        try { world.removeBody(b); } catch(e){}
+      }
+      for (let m of movingBoxes) {
+        try { scene.remove(m); } catch(e){}
+      }
+      movingBoxBodies.length = 0;
+      movingBoxes.length = 0;
+
+      // reset player physical body position & velocity
+      try {
+        playerBody.position.set(0, standingHeight/2 + 0.05, 5);
+        playerBody.velocity.set(0,0,0);
+        playerBody.quaternion.set(0,0,0,1);
+      } catch(e) {
+        // If for some reason body was removed, recreate minimal
+      }
+
+      // reset game variables
+      health = maxHealth;
+      stamina = maxStamina;
+      timeRemaining = 60;
+      gameEnded = false;
+      gameActive = true;
+      spawnTimer = 0;
+      lastDamageTime = 0;
+      document.getElementById('endScreen').style.display = 'none';
+      document.getElementById('ui').style.display = 'block';
+      updateUI();
+      showStatus('RESTARTED', 1200);
+      // re-lock pointer if possible
+      document.body.requestPointerLock();
     }
 
     function updateUI() {
@@ -750,6 +927,7 @@
         dashTime += delta;
         if (dashTime >= dashDuration) {
           isDashing = false;
+          showStatus('DASH READY!', 1000);
         }
       }
 
@@ -778,6 +956,7 @@
           if (stamina > maxStamina) stamina = maxStamina;
           if (stamina <= 0) sprinting = false;
         }
+        maybeLowStamina();
         updateUI();
 
         const v = playerBody.velocity;
@@ -835,9 +1014,50 @@
         }
       }
 
+      // Stop button pulse
       if (stopButtonMesh) {
         const pulseScale = 1 + Math.sin(Date.now() * 0.005) * 0.1;
         stopButtonMesh.scale.set(pulseScale, pulseScale, pulseScale);
+      }
+
+      // Flickering lights animation
+      flickerTimer += delta;
+      for (let i = 0; i < flickerLights.length; i++) {
+        const f = flickerLights[i];
+        // gentle breathing + seed offset
+        const t = performance.now() * 0.001 + f.seed;
+        const base = f.baseIntensity * (0.85 + 0.15 * Math.sin(t * 2.0));
+        // small random jitter per frame
+        const jitter = (Math.random() - 0.5) * 0.06;
+        f.light.intensity = Math.max(0.05, base + jitter);
+        // slightly change bulb material emissive by intensity if present
+        if (f.bulb && f.bulb.material) {
+          f.bulb.material.color.setScalar(Math.min(1, f.light.intensity * 1.5));
+        }
+      }
+
+      // Occasional brighter flicker burst to feel "sci-fi"
+      if (flickerTimer > nextFlickerBurst) {
+        const burstCount = 1 + Math.floor(Math.random()*3);
+        for (let b = 0; b < burstCount; b++) {
+          const idx = Math.floor(Math.random() * flickerLights.length);
+          const target = flickerLights[idx];
+          // quick bright pulse
+          (function(tgt){
+            const start = tgt.light.intensity;
+            let step = 0;
+            const steps = 10;
+            const interval = setInterval(() => {
+              step++;
+              tgt.light.intensity = start + Math.sin((step/steps) * Math.PI) * 1.6;
+              if (step >= steps) {
+                clearInterval(interval);
+              }
+            }, 25);
+          })(target);
+        }
+        flickerTimer = 0;
+        nextFlickerBurst = 4 + Math.random() * 8;
       }
 
       renderer.render(scene, camera);
